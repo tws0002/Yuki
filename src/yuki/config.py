@@ -1,6 +1,17 @@
+# -*- coding: utf-8 -*-
+"""
+module author: Long Hao <hoolongvfx@gmail.com>
+"""
 # Import built-in modules
 import os
 import sys
+
+ROOT = os.path.dirname(__file__)
+APP_NAME = 'yuki'
+APP_VERSION = '0.6.3'
+os.environ['BUILD_VERSION'] = APP_VERSION
+EXCEL_NAME = 'shot_info.xlsx'
+FORMATS = ['mov', 'mp4', 'avi', 'mkv']
 
 
 def resource_path(relative_path=None):
@@ -13,9 +24,3 @@ def resource_path(relative_path=None):
     if not relative_path:
         return base_path
     return os.path.join(base_path, relative_path)
-
-os.environ['PIPELINE_ICON'] = 'logo.ico'
-ROOT = os.path.dirname(__file__)
-APP_NAME = 'yuki'
-APP_VERSION = '0.6.2'
-os.environ['BUILD_VERSION'] = APP_VERSION

@@ -7,41 +7,47 @@ import contextlib
 import logging
 import os
 import re
-import subprocess as sp
+import subprocess
 import sys
 
 # Import third-party modules
 import xlsxwriter
+from PySide import QtCore, QtGui
 
 # Import local modules
-# This need first load
-from config import APP_NAME, APP_VERSION, resource_path
+from yuki.config import APP_NAME
+from yuki.config import APP_VERSION
+from yuki.config import EXCEL_NAME
+from yuki.config import FORMATS
+from yuki.config import resource_path
+from yuki.utils import catch_error_message
+from yuki.utils import create_missing_directories
+from yuki.utils import get_file_ext
+from yuki.utils import load_style_sheet
+from yuki.utils import progress_bar
+from yuki.utils import wait_cursor
+from yuki.widgets import MessageDisplay
 
-os.environ['APP_CONFIG'] = resource_path()
-
-import hz.toolkit as htk
-from PySide import QtCore, QtGui
-from hz.awesome_ui.widgets import AwesomeSplashScreen
-from hz.awesome_ui.widgets import MessageDisplay
-from hz.awesome_ui.widgets import RenderAwesomeUI
-
-try:
-    from subprocess import DEVNULL
-except ImportError:
-    DEVNULL = open(os.devnull, 'wb')
-
-_FFMPEG_CMD = resource_path('ffmpeg/ffmpeg.exe')
+_FFMPEG_CMD = resource_path('resources/ffmpeg/ffmpeg.exe')
 
 
-class MainGUI(QtGui.QWidget):
-
+class YukiGUI(QtGui.QWidget):
     def __init__(self):
-        super(MainGUI, self).__init__()
-        RenderAwesomeUI(resource_path('resources/gui.ui'), self)
+        super(YukiGUI, self).__init__()
+        self.setMinimumHeight(616)
+        self.setMinimumWidth(655)
+        verticalLayout_3 = QtGui.QVBoxLayout()
+        verticalLayout_2 = QtGui.QVBoxLayout()
+        self.verticalLayout = QtGui.QVBoxLayout()
+        self.progress_bar = QtGui.QProgressBar()
+        self.pushButton = QtGui.QPushButton('export to excel')
         self.table = QtGui.QTableWidget(self)
         self.verticalLayout.addWidget(self.table)
-        self.settings = htk.load_yaml(
-            resource_path('settings/config.yaml'), True)
+        verticalLayout_2.addWidget(self.progress_bar)
+        verticalLayout_2.addWidget(self.pushButton)
+        verticalLayout_3.addLayout(self.verticalLayout)
+        verticalLayout_3.addLayout(verticalLayout_2)
+        self.setLayout(verticalLayout_3)
         self.setAcceptDrops(True)
         header = self.table.horizontalHeader()
         header.setResizeMode(QtGui.QHeaderView.ResizeToContents)
@@ -49,10 +55,11 @@ class MainGUI(QtGui.QWidget):
         self.setWindowTitle('{} v{}'.format(APP_NAME, APP_VERSION))
         self.drag_file = None
         self.pushButton.clicked.connect(self.export_csv)
-        self.progressBar.hide()
-        self.setWindowIcon(QtGui.QIcon(resource_path("logo.ico")))
+        self.progress_bar.hide()
+        self.setWindowIcon(
+            QtGui.QIcon(resource_path("resources/images/logo.ico")))
         self.pushButton.hide()
-        bg_image = resource_path("bg.png").replace('\\', '/')
+        bg_image = resource_path("resources/images/bg.png").replace('\\', '/')
         style_sheet = """QTableWidget
          {
             background: url("<bg>");
@@ -63,11 +70,12 @@ class MainGUI(QtGui.QWidget):
          }""".replace("<bg>", bg_image)
         self.table.setStyleSheet(style_sheet)
 
+    @catch_error_message
+    @progress_bar
+    @wait_cursor()
     def export_csv(self):
-        self.progressBar.setValue(0)
-        self.progressBar.show()
         if self.drag_file:
-            excel_file_name = os.path.join(self.drag_file, 'shot_info.xlsx')
+            excel_file_name = os.path.join(self.drag_file, EXCEL_NAME)
             with xlsxwriter.Workbook(excel_file_name) as workbook:
                 worksheet = workbook.add_worksheet()
                 format_ = workbook.add_format()
@@ -94,27 +102,43 @@ class MainGUI(QtGui.QWidget):
                         mov_name = os.path.basename(file_path).split('.')[0]
                         thumb_file = os.path.join(self.drag_file, 'thumb',
                                                   '{}.jpg'.format(mov_name))
-                        thumb_file = thumb_file.replace('//', '/')
-                        htk.create_missing_directories(
-                            os.path.dirname(thumb_file))
-                        command = [
-                            _FFMPEG_CMD, '-y', '-i', file_path, '-f', 'image2',
-                            '-t', '0.001', '-vframes', '1', '-vf',
-                            'scale=300:-1:sws_dither=ed', thumb_file
-                        ]
+                        thumb_file = thumb_file.replace('/', '\\')
+                        folder = os.path.dirname(thumb_file)
+                        create_missing_directories(folder)
+                        command = list()
+                        command.append(_FFMPEG_CMD)
+                        command.append('-y')
+                        command.append('-i')
+                        command.append(file_path)
+                        command.append('-f')
+                        command.append('image2')
+                        command.append('-t')
+                        command.append('0.001')
+                        command.append('-vframes')
+                        # Make Thumb image in that frame.
+                        command.append('10')
+                        command.append('-vf')
+                        # Thumb file scale size.
+                        command.append('scale=300:-1:sws_dither=ed')
+                        # Thumb save location.
+                        command.append(thumb_file)
+                        LOGGER.debug(subprocess.list2cmdline(command))
                         try:
-                            sp.check_call(command)
-                        except Exception as e:
-                            LOGGER.error('{}:{}'.format(e, mov_name))
+                            subprocess.check_output(command)
+                        except subprocess.CalledProcessError as err:
+                            LOGGER.error('{}:{}'.format(err, mov_name))
                         worksheet.set_row(row + 1, 130)
                         if thumb_file:
-                            worksheet.insert_image(
-                                row + 1, 0, thumb_file, {
+                            image_format = {
                                     "x_scale": 0.9,
                                     'x_offset': 10,
                                     'y_offset': 10,
                                     "y_scale": 0.9
-                                })
+                            }
+                            worksheet.insert_image(row + 1,
+                                                   0,
+                                                   thumb_file,
+                                                   image_format)
                         item = self.table.item(row, 5)
                         value = item.text()
                         worksheet.write(row + 1, 1, value, format_)
@@ -123,9 +147,9 @@ class MainGUI(QtGui.QWidget):
                             value = item.text()
                             worksheet.write(row + 1, x + 2, value, format_)
                         APP.processEvents()
-                        self.progressBar.setValue(int(row * prog_incr))
-            self.progressBar.hide()
-            MessageDisplay(APP_NAME, "save excel success!")
+                        self.progress_bar.setValue(int(row * prog_incr))
+            self.progress_bar.hide()
+            MessageDisplay(APP_NAME, "Save excel success!")
 
     # Code reference from :
     # https://github.com/menpo/menpo/blob/master/menpo/io/input/video.py
@@ -156,8 +180,8 @@ class MainGUI(QtGui.QWidget):
         else:
             event.ignore()
 
+    @catch_error_message
     def dropEvent(self, event):
-        # self.search_text.deselect()
         if event.mimeData().hasUrls:
             event.setDropAction(QtCore.Qt.CopyAction)
             event.accept()
@@ -176,20 +200,23 @@ class MainGUI(QtGui.QWidget):
                     else:
                         LOGGER.warning('please drop the folder try again.')
 
+    @catch_error_message
+    @progress_bar
+    @wait_cursor()
     def build_items(self):
+        all_files = []
         self.pushButton.show()
-        self.table.setStyleSheet("""QTableWidget {
-                           color: rgb(250, 250, 250);
-                           }""")
+        sheet = """QTableWidget
+         {
+           color: rgb(250, 250, 250);
+         }
+         """
+        self.table.setStyleSheet(sheet)
         self.table.setRowCount(0)
         self.table.clearContents()
-        self.progressBar.setValue(0)
-        self.progressBar.show()
-        all_files = []
-        # all_files =
         for file_ in os.listdir(self.drag_file):
-            ext = htk.get_file_ext(file_)
-            if ext in self.settings.format:
+            ext = get_file_ext(file_)
+            if ext in FORMATS:
                 all_files.append(file_)
         if all_files:
             self.table.setColumnCount(6)
@@ -206,7 +233,7 @@ class MainGUI(QtGui.QWidget):
                     if info:
                         layer_item = QtGui.QTableWidgetItem(layer)
                         file_path = os.path.join(self.drag_file, layer)
-                        file_path = file_path.replace('//', '/')
+                        file_path = file_path.replace('/', '\\')
                         layer_item.file_path = file_path
 
                         self.table.setItem(row, 5, layer_item)
@@ -220,14 +247,14 @@ class MainGUI(QtGui.QWidget):
 
                             self.table.setItem(row, index, layer_item)
                         APP.processEvents()
-                        self.progressBar.setValue(int(row * prog_incr))
+                        self.progress_bar.setValue(int(row * prog_incr))
                 except Exception as e:
                     LOGGER.error(e)
                     LOGGER.error(layer)
         else:
-            LOGGER.warning('not find any data.')
-
-        self.progressBar.hide()
+            message = 'Did not found any data.'
+            LOGGER.warning(message)
+            MessageDisplay(APP_NAME, message, MessageDisplay.WARNING)
 
     # Code reference from :
     # https://github.com/menpo/menpo/blob/master/menpo/io/input/video.py
@@ -253,7 +280,8 @@ class MainGUI(QtGui.QWidget):
         command = [_FFMPEG_CMD, '-i', str(filepath), '-']
 
         with self._call_subprocess(
-                sp.Popen(command, stdout=DEVNULL, stderr=sp.PIPE)) as pipe:
+                subprocess.Popen(command, stdout=subprocess.PIPE,
+                                 stderr=subprocess.PIPE)) as pipe:
             raw_infos = pipe.stderr.read()
         # Note: we use '\d+\.?\d*' so we can match both int and float for the fps
         video_info = re.search(
@@ -296,22 +324,18 @@ class MainGUI(QtGui.QWidget):
 
 if __name__ == '__main__':
     APP = QtGui.QApplication(sys.argv)
-    GUI = MainGUI()
-    LOGGER = logging.getLogger('octopus')
-    HANDLER = logging.StreamHandler()
-    HANDLER.setLevel(logging.DEBUG)
-    FORMATTER = logging.Formatter(
-        '%(asctime)s - %(name)s: %(levelname)s  %(message)s')
-    HANDLER.setFormatter(FORMATTER)
-    LOGGER.addHandler(HANDLER)
+    GUI = YukiGUI()
+    LOGGER = logging.getLogger(__name__)
     IMGAE_PATH = resource_path('splash_screen.png')
-    SPLASH = AwesomeSplashScreen(IMGAE_PATH)
+    # SPLASH = AwesomeSplashScreen(IMGAE_PATH)
     APP.processEvents()
     APP.setApplicationVersion(APP_VERSION)
-    SPLASH.showMessage("version: {}".format(APP_VERSION))
-    SPLASH.effect()
+    # SPLASH.showMessage("version: {}".format(APP_VERSION))
+    # SPLASH.effect()
+    APP.setStyleSheet(
+        load_style_sheet(resource_path('resources/css/core.css')))
     APP.setApplicationName(APP_NAME)
     APP.processEvents()
     GUI.show()
-    SPLASH.finish(GUI)
+    # SPLASH.finish(GUI)
     APP.exec_()
